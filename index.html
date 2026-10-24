@@ -20,6 +20,14 @@ canvas{display:block}
 #nameModal button{flex:1;font-family:"Dela Gothic One",sans-serif;font-size:16px;padding:10px 0;border-radius:999px;border:1.5px solid #C9A84C;cursor:pointer}
 #nameModal .ok{background:linear-gradient(#fff1bf,#C9A84C 55%,#8a6a1f);color:#1a1205}
 #nameModal .cancel{background:rgba(0,0,0,.4);color:#fff6d6}
+#inApp{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.72);z-index:11;touch-action:auto}
+#inApp .box{width:min(310px,86vw);background:linear-gradient(#1f4a38,#08160f);border:2px solid #C9A84C;border-radius:16px;padding:22px 18px 16px;text-align:center;box-shadow:0 0 30px rgba(201,168,76,.35)}
+#inApp .ttl{font-family:"Dela Gothic One",sans-serif;color:#f3d27a;font-size:19px;margin-bottom:10px}
+#inApp .sub{font-family:"M PLUS 1p",sans-serif;font-weight:700;color:rgba(255,255,255,.8);font-size:13px;line-height:1.7}
+#inApp .hint{font-family:"M PLUS 1p",sans-serif;font-weight:700;color:#f3d27a;font-size:12.5px;margin-top:10px;line-height:1.6}
+#inApp button{display:block;width:100%;font-family:"Dela Gothic One",sans-serif;font-size:16px;padding:12px 0;border-radius:999px;border:1.5px solid #C9A84C;cursor:pointer;margin-top:12px}
+#inApp .ok{background:linear-gradient(#fff1bf,#C9A84C 55%,#8a6a1f);color:#1a1205}
+#inApp .cancel{background:rgba(0,0,0,.4);color:#fff6d6;font-size:13px;padding:9px 0}
 </style>
 </head>
 <body>
@@ -30,8 +38,15 @@ canvas{display:block}
   <input id="nameInput" maxlength="10" autocomplete="off" enterkeyhint="done">
   <div class="row"><button class="cancel" id="nameCancel">やめる</button><button class="ok" id="nameOk">決定</button></div>
 </div></div>
+<div id="inApp"><div class="box">
+  <div class="ttl">ブラウザで開いてね</div>
+  <div class="sub" id="inAppSub">アプリ内のブラウザだと、うまく遊べないことがあります。</div>
+  <div class="hint" id="inAppHint" style="display:none"></div>
+  <button class="ok" id="inAppOpen">Safariで開く</button>
+  <button class="cancel" id="inAppStay">このまま遊ぶ</button>
+</div></div>
 <script>
-const VERSION = 'v0.9.2';
+const VERSION = 'v0.9.3';
 const W = 360, H = 640;
 const F_JP = '"Dela Gothic One","Hiragino Sans","Noto Sans JP",sans-serif';
 const F_NUM = '"Bebas Neue","Dela Gothic One",Impact,sans-serif';
@@ -577,6 +592,39 @@ function submitScore() {
   Ranking.submit(entry).then(r => { lastRank = { status: 'ok', rank: r.rank }; }).catch(() => { lastRank = { status: 'error' }; });
 }
 // 名前入力
+// アプリ内ブラウザ（LINEなど）で開かれたら、Safari / いつものブラウザで開き直すよう案内する
+let inAppOpen = false;
+(function () {
+  const ua = navigator.userAgent || '', el = document.getElementById('inApp');
+  if (!el) return;
+  const isLine = /\bLine\//i.test(ua), isOther = /FBAN|FBAV|Instagram|Twitter|TikTok|musical_ly|BytedanceWebview/i.test(ua);
+  if (!isLine && !isOther) return;
+  const ios = /iPhone|iPad|iPod/i.test(ua), browser = ios ? 'Safari' : 'ブラウザ';
+  const openBtn = document.getElementById('inAppOpen'), hint = document.getElementById('inAppHint');
+  document.getElementById('inAppSub').textContent = `アプリ内のブラウザだと、うまく遊べないことがあります。${browser}で開くのがおすすめです。`;
+  const android = /Android/i.test(ua);
+  let target = '';
+  if (isLine) {
+    // LINE は URL に openExternalBrowser=1 を付けると外部ブラウザで開く（iPhone は Safari、Android はいつものブラウザ）
+    const u = new URL(location.href); u.searchParams.set('openExternalBrowser', '1'); target = u.toString();
+    openBtn.textContent = ios ? 'Safariで開く' : 'ブラウザで開く';
+  } else if (android) {
+    // Android のほかのアプリは intent で Chrome を直接呼べる
+    target = `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.android.chrome;end`;
+    openBtn.textContent = 'Chromeで開く';
+    hint.style.display = 'block';
+    hint.textContent = 'うまく開かないときは、右上の「⋮」メニューから「ブラウザで開く」を選んでください。';
+  } else {
+    // iPhone のほかのアプリはページから直接は開けないので、手順を案内
+    openBtn.style.display = 'none';
+    hint.style.display = 'block';
+    hint.textContent = '右上（または右下）の「…」メニューから「Safariで開く」または「ブラウザで開く」を選んでください。';
+  }
+  if (target) { openBtn.dataset.href = target; openBtn.addEventListener('click', () => { location.href = target; }); }
+  document.getElementById('inAppStay').addEventListener('click', () => { inAppOpen = false; el.style.display = 'none'; });
+  ['pointerdown', 'pointermove', 'pointerup'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
+  inAppOpen = true; el.style.display = 'flex';
+})();
 const nameModal = document.getElementById('nameModal'), nameInput = document.getElementById('nameInput');
 let askNamePending = false, nameForSubmit = false;
 function openNameInput(first = false) {
@@ -745,7 +793,7 @@ function update(dt) {
 // ===== 入力 =====
 function toLocal(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale }; }
 addEventListener('pointerdown', e => {
-  if (nameOpen) return;
+  if (nameOpen || inAppOpen) return;
   e.preventDefault(); ac();
   const p = toLocal(e);
   if (state === 'collection') { collDrag = { y: p.y, y0: p.y, x0: p.x, t: performance.now(), v: 0 }; collVel = 0; return; }
@@ -822,7 +870,7 @@ addEventListener('pointerup', endPointer);
 addEventListener('pointercancel', () => { flick = null; drag = null; collDrag = null; overDrag = null; rankDrag = null; });
 addEventListener('wheel', e => { if (state === 'ranking') { rankScroll = clamp(rankScroll + e.deltaY, 0, rankMax()); e.preventDefault(); return; } if (state === 'over') { resultScroll = clamp(resultScroll + e.deltaY, 0, resultMax()); e.preventDefault(); return; } if (state === 'collection') { collScroll = clamp(collScroll + e.deltaY, 0, collMax()); e.preventDefault(); } }, { passive: false });
 addEventListener('keydown', e => {
-  if (nameOpen) return;
+  if (nameOpen || inAppOpen) return;
   if (state === 'ranking' && (e.code === 'Escape' || e.code === 'Space' || e.code === 'Enter')) { e.preventDefault(); closeRank(); return; }
   if (e.code === 'KeyR' && (state === 'title' || (state === 'over' && overT > 1.8))) { openRank(state); return; }
   if (state === 'collection' && (e.code === 'Escape' || e.code === 'Space' || e.code === 'Enter')) { e.preventDefault(); closeColl(); return; }
