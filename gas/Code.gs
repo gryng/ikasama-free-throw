@@ -15,7 +15,7 @@
  */
 const SCORES = 'scores';
 const NAMES = 'names';
-const TOP_N = 10;
+const TOP_N = 50;
 const DEFAULT_NAME = 'ななしのイカサマ師';
 
 /** ランキングを返す。?pid=… を付けると、そのプレイヤーの順位（me）と、上位の中の自分（me: true）も返す */

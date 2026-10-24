@@ -31,7 +31,7 @@ canvas{display:block}
   <div class="row"><button class="cancel" id="nameCancel">やめる</button><button class="ok" id="nameOk">決定</button></div>
 </div></div>
 <script>
-const VERSION = 'v0.9.0';
+const VERSION = 'v0.9.1';
 const W = 360, H = 640;
 const F_JP = '"Dela Gothic One","Hiragino Sans","Noto Sans JP",sans-serif';
 const F_NUM = '"Bebas Neue","Dela Gothic One",Impact,sans-serif';
@@ -503,7 +503,7 @@ const DUMMY_RANKING = [
   { name: 'ななし', score: 24, title: '凄腕イカサマ師' },
 ];
 // 本番のランキング（Google Apps Script のウェブアプリURL）。空のときは仮データで動く
-const RANK_URL = '';
+const RANK_URL = 'https://script.google.com/macros/s/AKfycbzQFF6_CBeTAeVQlFT305dXB-0I6xUYMe7DPjwdcoCYJxQamM4tYhdmIpL4eH-Ldei7/exec';
 // 端末ごとのプレイヤーID（ランキングで「1人1件」にするため。名前が同じでも別人として扱える）
 let playerId = '';
 try {
@@ -556,11 +556,19 @@ function lastTitleName() { try { return localStorage.getItem('ikasama_ft_lasttit
 const RANK_BTN_TITLE = { x: 186, y: 574, w: 144, h: 36 }, RANK_BTN_OVER = { x: 184, y: 572, w: 136, h: 30 };
 const RANK_CLOSE = { x: 190, y: 584, w: 140, h: 40 }, RANK_NAME = { x: 30, y: 584, w: 140, h: 40 };
 let rankFrom = 'title', rankOpenT = 0, rankData = null, rankStatus = 'idle', lastRank = null, nameOpen = false;
+const RANK_LIMIT = 50, RANK_LT = 108, RANK_BOT = 500, RANK_RH = 40;
+let rankScroll = 0, rankVel = 0, rankDrag = null;
+function rankMax() { return rankData ? Math.max(0, rankData.top.length * RANK_RH - (RANK_BOT - RANK_LT)) : 0; }
 function loadRanking() {
   rankStatus = 'loading';
-  Ranking.fetchTop(10).then(d => { rankData = d; rankStatus = 'ok'; }).catch(() => { rankStatus = 'error'; });
+  Ranking.fetchTop(RANK_LIMIT).then(d => {
+    rankData = d; rankStatus = 'ok'; rankVel = 0;
+    // 自分が下の方にいるときは、自分の行が見える位置までスクロールしておく
+    const mi = d.top.findIndex(e => e.me);
+    rankScroll = mi >= 8 ? clamp(mi * RANK_RH - (RANK_BOT - RANK_LT) / 2 + RANK_RH / 2, 0, rankMax()) : 0;
+  }).catch(() => { rankStatus = 'error'; });
 }
-function openRank(from) { rankFrom = from; state = 'ranking'; rankOpenT = time; SFX.tap(); loadRanking(); }
+function openRank(from) { rankFrom = from; state = 'ranking'; rankOpenT = time; rankScroll = 0; rankVel = 0; SFX.tap(); loadRanking(); }
 function closeRank() { state = rankFrom; SFX.tap(); }
 function submitScore() {
   if (score <= 0) { lastRank = null; return; }
@@ -673,6 +681,11 @@ function update(dt) {
     if (resultScroll <= 0 || resultScroll >= mx) { resultScroll = clamp(resultScroll, 0, mx); resultVel = 0; }
     if (Math.abs(resultVel) < 8) resultVel = 0;
   }
+  if (state === 'ranking' && !rankDrag && rankVel) {
+    rankScroll += rankVel * dt; rankVel *= Math.exp(-3.5 * dt);
+    const mx = rankMax(); if (rankScroll <= 0 || rankScroll >= mx) { rankScroll = clamp(rankScroll, 0, mx); rankVel = 0; }
+    if (Math.abs(rankVel) < 8) rankVel = 0;
+  }
   if (state === 'collection' && !collDrag) { collScroll += collVel * dt; collVel *= Math.exp(-4 * dt); if (collScroll < 0) { collScroll += (0 - collScroll) * Math.min(1, dt * 12); collVel = 0; } if (collScroll > collMax()) { collScroll += (collMax() - collScroll) * Math.min(1, dt * 12); collVel = 0; } }
   netAnim = Math.max(0, netAnim - dt * 1.5); cheer = Math.max(0, cheer - dt * 0.7); shake = Math.max(0, shake - dt * 4);
   flash.a = Math.max(0, flash.a - dt * 3); punch = Math.max(0, punch - dt * 3.5); scoreBump = Math.max(0, scoreBump - dt * 3);
@@ -734,6 +747,7 @@ addEventListener('pointerdown', e => {
     if (inRect(p, RANK_CLOSE)) closeRank();
     else if (inRect(p, RANK_NAME)) { SFX.tap(); openNameInput(); }
     else if (rankStatus === 'error' && p.y > 120 && p.y < 520) loadRanking();
+    else if (p.y > RANK_LT && p.y < RANK_BOT) { rankDrag = { y: p.y, t: performance.now(), v: 0 }; rankVel = 0; }
     return;
   }
   if (state === 'title') { if (fontsReady) { if (inRect(p, TITLE_BTN)) openColl('title'); else if (inRect(p, RANK_BTN_TITLE)) openRank('title'); else { SFX.tap(); startGame(); } } return; }
@@ -743,6 +757,11 @@ addEventListener('pointerdown', e => {
 }, { passive: false });
 addEventListener('pointermove', e => {
   const p = toLocal(e);
+  if (rankDrag) {
+    const now = performance.now(), dy = p.y - rankDrag.y, dtm = Math.max(0.008, (now - rankDrag.t) / 1000);
+    rankScroll = clamp(rankScroll - dy, 0, rankMax());
+    rankDrag.v = rankDrag.v * 0.3 + (-dy / dtm) * 0.7; rankDrag.y = p.y; rankDrag.t = now;
+  }
   if (overDrag) {
     if (Math.abs(p.y - overDrag.y0) > 8) overDrag.moved = true;
     const now = performance.now(), dy = p.y - overDrag.y, dtm = Math.max(0.008, (now - overDrag.t) / 1000);
@@ -777,6 +796,7 @@ function overTap(p) {
 }
 function endPointer(e) {
   drag = null;
+  if (rankDrag) { const d = rankDrag; rankDrag = null; rankVel = performance.now() - d.t < 80 ? clamp(d.v, -3000, 3000) : 0; return; }
   if (overDrag) { const p = e ? toLocal(e) : null, d = overDrag; overDrag = null; if (d.moved) { resultVel = performance.now() - d.t < 80 ? clamp(d.v, -3000, 3000) : 0; } else if (p && state === 'over') overTap(p); return; }
   if (collDrag) {
     const p = e ? toLocal(e) : { x: -1, y: -1 }, tap = Math.hypot(p.x - collDrag.x0, p.y - collDrag.y0) < 10;
@@ -793,8 +813,8 @@ function endPointer(e) {
   if (fy < -400 && pts[0].y - last.y > 25) shootFromFlick(fx, fy);
 }
 addEventListener('pointerup', endPointer);
-addEventListener('pointercancel', () => { flick = null; drag = null; collDrag = null; overDrag = null; });
-addEventListener('wheel', e => { if (state === 'over') { resultScroll = clamp(resultScroll + e.deltaY, 0, resultMax()); e.preventDefault(); return; } if (state === 'collection') { collScroll = clamp(collScroll + e.deltaY, 0, collMax()); e.preventDefault(); } }, { passive: false });
+addEventListener('pointercancel', () => { flick = null; drag = null; collDrag = null; overDrag = null; rankDrag = null; });
+addEventListener('wheel', e => { if (state === 'ranking') { rankScroll = clamp(rankScroll + e.deltaY, 0, rankMax()); e.preventDefault(); return; } if (state === 'over') { resultScroll = clamp(resultScroll + e.deltaY, 0, resultMax()); e.preventDefault(); return; } if (state === 'collection') { collScroll = clamp(collScroll + e.deltaY, 0, collMax()); e.preventDefault(); } }, { passive: false });
 addEventListener('keydown', e => {
   if (nameOpen) return;
   if (state === 'ranking' && (e.code === 'Escape' || e.code === 'Space' || e.code === 'Enter')) { e.preventDefault(); closeRank(); return; }
@@ -1404,8 +1424,8 @@ function drawRanking() {
   bigText('ランキング', 0, 0, 32, F_JP, goldGrad(0, 32), { ow: 0.22, iw: 0.07, inner: '#fff6d6', glow: 'rgba(201,168,76,0.6)' });
   ctx.restore();
   ctx.font = `18px ${F_NUM}`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(201,168,76,0.8)';
-  ctx.fillText('— TOP 10 —' + (Ranking.mock ? '   (SAMPLE)' : ''), W / 2, 92);
-  const LT = 108, RH = 40;
+  ctx.fillText(`— TOP ${RANK_LIMIT} —` + (Ranking.mock ? '   (SAMPLE)' : ''), W / 2, 92);
+  const LT = RANK_LT, RH = RANK_RH;
   if (rankStatus === 'loading' || rankStatus === 'idle') {
     ctx.save(); ctx.translate(W / 2, 300); ctx.rotate(time * 6);
     ctx.strokeStyle = GOLD; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 1.4); ctx.stroke(); ctx.restore(); ctx.lineCap = 'butt';
@@ -1415,8 +1435,12 @@ function drawRanking() {
     ctx.font = `700 12px ${F_UI}`; ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillText('タップでもう一度読み込む', W / 2, 316);
   } else if (rankData) {
     const medal = ['#f3d27a', '#d9dde2', '#d9935a'];
+    ctx.save(); ctx.beginPath(); ctx.rect(0, LT - 2, W, RANK_BOT - LT + 2); ctx.clip();
+    if (!rankData.top.length) { ctx.font = `700 12px ${F_UI}`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillText('まだ誰も登録していません。一番乗りのチャンス！', W / 2, 220); }
     rankData.top.forEach((e, i) => {
-      const y = LT + i * RH, appear = easeOut((t - 0.05 * i) / 0.3), ox = (1 - appear) * 40;
+      const y = LT + i * RH - rankScroll;
+      if (y + RH < LT || y > RANK_BOT) return;
+      const vi = Math.max(0, i - Math.floor(rankScroll / RH)), appear = easeOut((t - 0.05 * Math.min(vi, 12)) / 0.3), ox = (1 - appear) * 40;
       ctx.globalAlpha = k * clamp(appear, 0, 1);
       ctx.save(); ctx.translate(ox, 0);
       rr(20, y, W - 40, RH - 6, 9);
@@ -1440,9 +1464,15 @@ function drawRanking() {
       ctx.fillText(e.score, W - 34, cy + 9);
       ctx.restore();
     });
-    ctx.globalAlpha = k;
+    ctx.restore(); ctx.globalAlpha = k;
+    // 上下のフェードとスクロールバー
+    let fg = ctx.createLinearGradient(0, RANK_BOT - 18, 0, RANK_BOT); fg.addColorStop(0, 'rgba(3,8,6,0)'); fg.addColorStop(1, 'rgba(3,8,6,0.9)');
+    if (rankScroll < rankMax() - 2) { ctx.fillStyle = fg; ctx.fillRect(0, RANK_BOT - 18, W, 18); }
+    if (rankScroll > 2) { fg = ctx.createLinearGradient(0, LT - 2, 0, LT + 14); fg.addColorStop(0, 'rgba(3,8,6,0.9)'); fg.addColorStop(1, 'rgba(3,8,6,0)'); ctx.fillStyle = fg; ctx.fillRect(0, LT - 2, W, 16); }
+    const rmx = rankMax();
+    if (rmx > 0) { const vh = RANK_BOT - LT, th = vh * vh / (vh + rmx), ty = LT + (vh - th) * clamp(rankScroll / rmx, 0, 1); rr(W - 9, ty, 3, th, 1.5); ctx.fillStyle = 'rgba(201,168,76,0.6)'; ctx.fill(); }
     // 自分の順位
-    const y = LT + 10 * RH + 4;
+    const y = RANK_BOT + 8;
     rr(20, y, W - 40, 50, 12); ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill(); ctx.strokeStyle = GOLD; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.textAlign = 'left'; ctx.font = `900 10px ${F_UI}`; ctx.fillStyle = 'rgba(201,168,76,0.9)'; ctx.fillText('あなた', 34, y + 18);
     ctx.font = `900 14px ${F_UI}`; ctx.fillStyle = '#fff';
