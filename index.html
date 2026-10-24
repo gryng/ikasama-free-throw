@@ -31,7 +31,7 @@ canvas{display:block}
   <div class="row"><button class="cancel" id="nameCancel">やめる</button><button class="ok" id="nameOk">決定</button></div>
 </div></div>
 <script>
-const VERSION = 'v0.9.1';
+const VERSION = 'v0.9.2';
 const W = 360, H = 640;
 const F_JP = '"Dela Gothic One","Hiragino Sans","Noto Sans JP",sans-serif';
 const F_NUM = '"Bebas Neue","Dela Gothic One",Impact,sans-serif';
@@ -477,7 +477,7 @@ let retryPress = 0;
 let collFrom = 'title', collScroll = 0, collVel = 0, collDrag = null, collOpenT = 0;
 function collRows() {
   const rows = [{ h: true, text: 'スコア称号' }];
-  TIER_TITLES.forEach(([min, name], i) => rows.push({ name, stars: tierStars(i), cond: `スコア ${min} 以上`, no: i + 1 }));
+  TIER_TITLES.forEach(([min, name], i) => rows.push({ name, stars: tierStars(i), cond: i === 0 ? '0点で終わる' : `スコア ${min} 以上`, no: i + 1 }));
   rows.push({ h: true, text: 'レア称号' });
   SPECIAL_TITLES.forEach(([name, sv, , cond], i) => rows.push({ name, stars: sv, cond, rare: true, no: TIER_TITLES.length + i + 1 }));
   return rows;
@@ -610,16 +610,22 @@ function closeColl() { state = collFrom; SFX.tap(); }
 const inRect = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 function unlockedCount() { return unlocked.filter(t => ALL_TITLES.includes(t)).length; }
 
+// レア称号が取れたときも、スコア称号は一緒にコレクションに入る
 function makeTitle() {
   let ti = 0; TIER_TITLES.forEach(([min], i) => { if (score >= min) ti = i; });
-  let title = TIER_TITLES[ti][1], stars = Math.min(5, 1 + Math.floor(ti / 3.5)), special = false;
+  const tierTitle = TIER_TITLES[ti][1];
+  let title = tierTitle, stars = Math.min(5, 1 + Math.floor(ti / 3.5)), special = false;
   for (const [name, sv, cond] of SPECIAL_TITLES) if (cond()) { title = name; stars = sv; special = true; break; }
   let prefix = null;
   for (const [name, cond] of PREFIXES) if (cond()) { prefix = name; break; }
   if (!prefix) prefix = NEUTRAL_PREFIXES[Math.floor(Math.random() * NEUTRAL_PREFIXES.length)];
-  const isNewTitle = !unlocked.includes(title);
-  if (isNewTitle) { unlocked.push(title); try { localStorage.setItem('ikasama_ft_titles', JSON.stringify(unlocked)); } catch (e) {} }
-  return { prefix, title, stars, special, isNewTitle, count: unlocked.filter(t => ALL_TITLES.includes(t)).length, total: ALL_TITLES.length };
+  // 条件は「スコア○以上」なので、今回のスコア以下の段階のスコア称号はまとめて手に入る
+  // （「ただの観客」だけは0点で終わったときの特別枠）
+  const earned = [title, ...TIER_TITLES.slice(ti === 0 ? 0 : 1, ti + 1).map(t => t[1]).reverse()];
+  const newTitles = earned.filter((t, i, a) => a.indexOf(t) === i && !unlocked.includes(t));
+  if (newTitles.length) { unlocked.push(...newTitles); try { localStorage.setItem('ikasama_ft_titles', JSON.stringify(unlocked)); } catch (e) {} }
+  return { prefix, title, stars, special, tierTitle, newTitles, isNewTitle: newTitles.includes(title), tierNew: special && newTitles.includes(tierTitle),
+    count: unlocked.filter(t => ALL_TITLES.includes(t)).length, total: ALL_TITLES.length };
 }
 function hit(kind, p) {
   if (time - lastHit < 0.05) return; lastHit = time;
@@ -1509,7 +1515,7 @@ function drawCollection() {
   // リスト
   ctx.save(); ctx.beginPath(); ctx.rect(0, COLL_TOP, W, COLL_BOT - COLL_TOP); ctx.clip();
   let y = COLL_TOP + 6 - collScroll;
-  const lastNew = titleInfo && titleInfo.isNewTitle ? titleInfo.title : null;
+  const lastNew = titleInfo ? titleInfo.newTitles : [];
   for (const r of collRows()) {
     if (r.h) {
       if (y + HEAD_H > COLL_TOP && y < COLL_BOT) {
@@ -1549,7 +1555,7 @@ function drawCollection() {
       const cw = ctx.measureText(r.cond).width, cmax = 120;
       ctx.save(); ctx.translate(bx + bw - 12, y + 40); ctx.scale(Math.min(1, cmax / cw), 1); ctx.fillText(r.cond, 0, 0); ctx.restore();
       if (!ok) { ctx.font = `14px ${F_UI}`; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillText('🔒', bx + 58, y + 18); }
-      if (ok && r.name === lastNew) {
+      if (ok && lastNew.includes(r.name)) {
         ctx.save(); ctx.translate(bx + bw - 34, y + 2); ctx.rotate(0.15);
         bigText('NEW!', 0, 0, 16, F_NUM, '#ffffff', { ow: 0.22, inner: '#ff4d6d', glow: '#ff4d6d' }); ctx.restore();
       }
@@ -1648,10 +1654,11 @@ function drawOverBody(t) {
   // 結果パネル
   const pk = easeOut((t - 0.7) / 0.35), py = 158 + (1 - pk) * 80;
   ctx.globalAlpha = pk;
-  rr(30, py, W - 60, 326, 16);
-  const g = ctx.createLinearGradient(0, py, 0, py + 326); g.addColorStop(0, 'rgba(27,67,50,0.95)'); g.addColorStop(1, 'rgba(6,18,12,0.95)');
+  const PH = titleInfo && titleInfo.special ? 344 : 326;
+  rr(30, py, W - 60, PH, 16);
+  const g = ctx.createLinearGradient(0, py, 0, py + PH); g.addColorStop(0, 'rgba(27,67,50,0.95)'); g.addColorStop(1, 'rgba(6,18,12,0.95)');
   ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = GOLD; ctx.lineWidth = 2; ctx.stroke();
-  rr(36, py + 6, W - 72, 314, 12); ctx.strokeStyle = 'rgba(201,168,76,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+  rr(36, py + 6, W - 72, PH - 12, 12); ctx.strokeStyle = 'rgba(201,168,76,0.35)'; ctx.lineWidth = 1; ctx.stroke();
   ctx.font = `20px ${F_NUM}`; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fillText('SCORE', W / 2, py + 36);
   if (t > 1.2) {
     ctx.save(); ctx.translate(W - 48, py + 96); ctx.textAlign = 'right';
@@ -1695,7 +1702,15 @@ function drawOverBody(t) {
     ctx.font = `900 15px ${F_UI}`; ctx.textAlign = 'center';
     ctx.fillStyle = GOLD; ctx.fillText('★'.repeat(ti.stars) + '☆'.repeat(5 - ti.stars), W / 2, py + 292);
     ctx.font = `700 10.5px ${F_UI}`; ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText(`称号コレクション  ${ti.count} / ${ti.total}`, W / 2, py + 312);
+    let cy2 = py + 312;
+    if (ti.special) {
+      ctx.font = `700 11px ${F_UI}`; ctx.fillStyle = 'rgba(255,246,214,0.85)';
+      const tx = `＋ スコア称号「${ti.tierTitle}」`;
+      ctx.fillText(tx, W / 2 - (ti.tierNew ? 14 : 0), cy2);
+      if (ti.tierNew) { const tw = ctx.measureText(tx).width; ctx.font = `13px ${F_NUM}`; ctx.fillStyle = '#ff4d6d'; ctx.textAlign = 'left'; ctx.fillText('NEW!', W / 2 - 14 + tw / 2 + 4, cy2); ctx.textAlign = 'center'; }
+      cy2 += 18; ctx.font = `700 10.5px ${F_UI}`; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    }
+    ctx.fillText(`称号コレクション  ${ti.count} / ${ti.total}`, W / 2, cy2);
     if (ti.isNewTitle && t > 1.85) {
       ctx.save(); ctx.translate(W - 62, py + 240); ctx.rotate(0.2); const ps = 1 + Math.sin(time * 9) * 0.08; ctx.scale(ps, ps);
       bigText('NEW!', 0, 0, 24, F_NUM, '#ffffff', { ow: 0.22, inner: '#ff4d6d', glow: '#ff4d6d' });
